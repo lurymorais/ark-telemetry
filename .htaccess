@@ -1,0 +1,58 @@
+# ============================================
+# ARK TELEMETRY - PROTEÇÃO SIMPLIFICADA v3.0
+# ============================================
+
+# Bloquear acesso a todos os arquivos por padrão
+<Files "*">
+    Require all denied
+</Files>
+
+# Permitir apenas os endpoints essenciais (NOVO SISTEMA)
+<Files "dashboard.php">
+    Require all granted
+</Files>
+
+<Files "stats.php">
+    Require all granted
+</Files>
+
+<Files "test.php">
+    Require all granted
+</Files>
+
+<Files "debug.php">
+    Require all granted
+</Files>
+
+<Files "recovery.php">
+    Require all granted
+</Files>
+
+<Files "validate-naan.php">
+    Require all granted
+</Files>
+
+<Files "monthly_collector.php">
+    Require all granted
+</Files>
+
+<Files "daily_monitor.php">
+    Require all granted
+</Files>
+
+<Files "pull_single.php">
+    Require all granted
+</Files>
+
+<Files "api.php">
+    Require all granted
+</Files>
+
+# Prevenir listagem de diretórios
+Options -Indexes
+
+# Headers de segurança
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+</IfModule>
