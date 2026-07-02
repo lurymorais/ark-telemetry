@@ -1,46 +1,18 @@
 # ============================================
-# ARK TELEMETRY - PROTEÇÃO SIMPLIFICADA v3.0
+# ARK TELEMETRY - PROTECTION v3.1.0.0
 # ============================================
 
-# Bloquear acesso a todos os arquivos por padrão
+# Block access to all files by default
 <Files "*">
     Require all denied
 </Files>
 
-# Permitir apenas os endpoints essenciais (NOVO SISTEMA)
-<Files "dashboard.php">
+# Allow only essential endpoints
+<Files "validate.php">
     Require all granted
 </Files>
 
-<Files "stats.php">
-    Require all granted
-</Files>
-
-<Files "test.php">
-    Require all granted
-</Files>
-
-<Files "debug.php">
-    Require all granted
-</Files>
-
-<Files "recovery.php">
-    Require all granted
-</Files>
-
-<Files "validate-naan.php">
-    Require all granted
-</Files>
-
-<Files "monthly_collector.php">
-    Require all granted
-</Files>
-
-<Files "daily_monitor.php">
-    Require all granted
-</Files>
-
-<Files "pull_single.php">
+<Files "collect.php">
     Require all granted
 </Files>
 
@@ -48,10 +20,28 @@
     Require all granted
 </Files>
 
-# Prevenir listagem de diretórios
+<Files "stats.php">
+    Require all granted
+</Files>
+
+<Files "dashboard.php">
+    Require all granted
+</Files>
+
+# NAAN cache - cron only (not publicly accessible)
+<Files "naan_cache.php">
+    Require all denied
+</Files>
+
+# Scheduler - cron only (not publicly accessible)
+<Files "scheduler.php">
+    Require all denied
+</Files>
+
+# Prevent directory listing
 Options -Indexes
 
-# Headers de segurança
+# Security headers
 <IfModule mod_headers.c>
     Header set X-Content-Type-Options "nosniff"
     Header set X-Frame-Options "DENY"
