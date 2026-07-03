@@ -1,14 +1,17 @@
 #!/usr/bin/php
 <?php
 /**
- * NAAN Cache Updater - v3.1.0.0
- * Run daily via cron to fetch the list of active NAANs from n2t.net
+ * NAAN Cache Updater & Cleanup - v3.1.0.0
+ * Run daily via cron to fetch NAAN list and clean old records
  * 
  * @package ARKTelemetry
  * @version 3.1.0.0
  */
 
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/rate_limit_helper.php';
+
+global $ark_pdo;
 
 define('CACHE_FILE', __DIR__ . '/naan_cache.json');
 define('CACHE_EXPIRY', 86400); // 24 hours
@@ -16,16 +19,6 @@ define('CACHE_EXPIRY', 86400); // 24 hours
 /**
  * Fetch active NAANs from n2t.net registry
  * Source: https://cdluc3.github.io/naan_reg_priv/naan_registry.txt
- * 
- * Format:
- * naa:
- * who:   Organization Name (=) ACRONYM
- * what:  16081
- * when:  2025.11.17
- * where: https://revistacarnaubais.com.br
- * how:   NP | ['NR', 'OP', 'CC', 'LC'] | 2025 |
- * 
- * @return array List of NAANs with their registered domains
  */
 function fetchNaanList() {
     $url = 'https://cdluc3.github.io/naan_reg_priv/naan_registry.txt';
@@ -57,48 +50,36 @@ function fetchNaanList() {
     foreach ($lines as $line) {
         $line = trim($line);
         
-        // Skip empty lines and comments (lines starting with #)
         if (empty($line) || strpos($line, '#') === 0) {
             continue;
         }
         
-        // Start of a new NAAN entry
         if (strpos($line, 'naa:') === 0) {
-            // If we have a previous entry, save it
             if ($currentNaan && $currentWhere) {
                 $naanMap[$currentNaan] = $currentWhere;
             }
-            // Reset for new entry
             $currentNaan = null;
             $currentWhere = null;
             $inEntry = true;
             continue;
         }
         
-        // Only process if we're inside an entry
         if (!$inEntry) {
             continue;
         }
         
-        // Extract what: (NAAN number)
         if (strpos($line, 'what:') === 0) {
             $currentNaan = trim(substr($line, 5));
-            // Remove any non-numeric characters
             $currentNaan = preg_replace('/[^0-9]/', '', $currentNaan);
         }
         
-        // Extract where: (domain)
         if (strpos($line, 'where:') === 0) {
             $currentWhere = trim(substr($line, 6));
-            // Remove http:// or https://
             $currentWhere = preg_replace('#^https?://#', '', $currentWhere);
-            // Remove trailing slash
             $currentWhere = rtrim($currentWhere, '/');
         }
         
-        // Check if entry is complete (has both what and where)
         if ($currentNaan && $currentWhere && !empty($currentWhere)) {
-            // Save and reset for next entry
             $naanMap[$currentNaan] = $currentWhere;
             $currentNaan = null;
             $currentWhere = null;
@@ -106,7 +87,6 @@ function fetchNaanList() {
         }
     }
     
-    // Save any remaining entry
     if ($currentNaan && $currentWhere && !empty($currentWhere)) {
         $naanMap[$currentNaan] = $currentWhere;
     }
@@ -151,29 +131,68 @@ function loadCache() {
     return $cache;
 }
 
+/**
+ * Clean up old records from database
+ * - Validation logs: delete after 24 months
+ * - Rate limits: delete after 24 hours
+ * - Tokens: delete after expiration (expires_at)
+ * - Statistics: never deleted (cumulative data)
+ */
+function cleanupOldRecords($pdo) {
+    $deleted = [];
+    
+    $stmt = $pdo->prepare("
+        DELETE FROM ark_validations 
+        WHERE validated_at < DATE_SUB(NOW(), INTERVAL 24 MONTH)
+    ");
+    $stmt->execute();
+    $deleted['validations'] = $stmt->rowCount();
+    
+    $stmt = $pdo->prepare("
+        DELETE FROM ark_rate_limits 
+        WHERE last_attempt < DATE_SUB(NOW(), INTERVAL 24 HOUR)
+    ");
+    $stmt->execute();
+    $deleted['rate_limits'] = $stmt->rowCount();
+    
+    $stmt = $pdo->prepare("
+        DELETE FROM ark_validation_tokens 
+        WHERE expires_at < NOW()
+    ");
+    $stmt->execute();
+    $deleted['tokens'] = $stmt->rowCount();
+        
+    return $deleted;
+}
+
 // ============ MAIN EXECUTION ============
 
-ark_log("NAAN Cache: Starting update", 'info');
+ark_log("NAAN Cache: Starting update and cleanup", 'info');
 
 try {
-    // Fetch fresh list
+    // 1. Fetch fresh NAAN list
     $naanList = fetchNaanList();
     $count = count($naanList);
     
-    // Save to cache (overwrites existing)
+    // 2. Save to cache
     $cache = saveCache($naanList);
     
+    // 3. Cleanup old records
+    $deleted = cleanupOldRecords($ark_pdo);
+    
     ark_log("NAAN Cache: Updated successfully - {$count} NAANs cached", 'info');
+    ark_log("Cleanup: deleted {$deleted['validations']} validations, {$deleted['rate_limits']} rate limits, {$deleted['tokens']} tokens", 'info');
     
     echo json_encode([
         'status' => 'success',
-        'message' => "NAAN cache updated successfully",
+        'message' => "NAAN cache updated and cleanup completed",
         'count' => $count,
+        'cleanup' => $deleted,
         'timestamp' => date('c')
     ]);
     
 } catch (Exception $e) {
-    // If update fails, keep the existing cache (do not overwrite)
+    // If update fails, keep the existing cache
     $existingCache = loadCache();
     
     if ($existingCache) {
