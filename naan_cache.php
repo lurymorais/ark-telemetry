@@ -14,12 +14,21 @@ define('CACHE_FILE', __DIR__ . '/naan_cache.json');
 define('CACHE_EXPIRY', 86400); // 24 hours
 
 /**
- * Fetch active NAANs from n2t.net
+ * Fetch active NAANs from n2t.net registry
+ * Source: https://cdluc3.github.io/naan_reg_priv/naan_registry.txt
+ * 
+ * Format:
+ * naa:
+ * who:   Organization Name (=) ACRONYM
+ * what:  16081
+ * when:  2025.11.17
+ * where: https://revistacarnaubais.com.br
+ * how:   NP | ['NR', 'OP', 'CC', 'LC'] | 2025 |
  * 
  * @return array List of NAANs with their registered domains
  */
 function fetchNaanList() {
-    $url = 'https://n2t.net/naan_list.json';
+    $url = 'https://cdluc3.github.io/naan_reg_priv/naan_registry.txt';
     
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
@@ -38,27 +47,79 @@ function fetchNaanList() {
         throw new Exception("Failed to fetch NAAN list: HTTP {$httpCode} - {$curlError}");
     }
     
-    $data = json_decode($response, true);
+    // Parse the registry format
+    $naanMap = [];
+    $lines = explode("\n", $response);
+    $currentNaan = null;
+    $currentWhere = null;
+    $inEntry = false;
     
-    if (!is_array($data)) {
-        throw new Exception("Invalid response format from n2t.net");
+    foreach ($lines as $line) {
+        $line = trim($line);
+        
+        // Skip empty lines and comments (lines starting with #)
+        if (empty($line) || strpos($line, '#') === 0) {
+            continue;
+        }
+        
+        // Start of a new NAAN entry
+        if (strpos($line, 'naa:') === 0) {
+            // If we have a previous entry, save it
+            if ($currentNaan && $currentWhere) {
+                $naanMap[$currentNaan] = $currentWhere;
+            }
+            // Reset for new entry
+            $currentNaan = null;
+            $currentWhere = null;
+            $inEntry = true;
+            continue;
+        }
+        
+        // Only process if we're inside an entry
+        if (!$inEntry) {
+            continue;
+        }
+        
+        // Extract what: (NAAN number)
+        if (strpos($line, 'what:') === 0) {
+            $currentNaan = trim(substr($line, 5));
+            // Remove any non-numeric characters
+            $currentNaan = preg_replace('/[^0-9]/', '', $currentNaan);
+        }
+        
+        // Extract where: (domain)
+        if (strpos($line, 'where:') === 0) {
+            $currentWhere = trim(substr($line, 6));
+            // Remove http:// or https://
+            $currentWhere = preg_replace('#^https?://#', '', $currentWhere);
+            // Remove trailing slash
+            $currentWhere = rtrim($currentWhere, '/');
+        }
+        
+        // Check if entry is complete (has both what and where)
+        if ($currentNaan && $currentWhere && !empty($currentWhere)) {
+            // Save and reset for next entry
+            $naanMap[$currentNaan] = $currentWhere;
+            $currentNaan = null;
+            $currentWhere = null;
+            $inEntry = false;
+        }
     }
     
-    // Build a simple array: naan => domain
-    $naanMap = [];
-    foreach ($data as $naan => $info) {
-        $domain = isset($info['where']) ? preg_replace('#^https?://#', '', $info['where']) : '';
-        $domain = rtrim($domain, '/');
-        if (!empty($domain)) {
-            $naanMap[$naan] = $domain;
-        }
+    // Save any remaining entry
+    if ($currentNaan && $currentWhere && !empty($currentWhere)) {
+        $naanMap[$currentNaan] = $currentWhere;
+    }
+    
+    if (empty($naanMap)) {
+        throw new Exception("No NAANs found in registry response");
     }
     
     return $naanMap;
 }
 
 /**
- * Save cache to file
+ * Save cache to file (overwrites existing)
  */
 function saveCache($data) {
     $cache = [
@@ -99,7 +160,7 @@ try {
     $naanList = fetchNaanList();
     $count = count($naanList);
     
-    // Save to cache
+    // Save to cache (overwrites existing)
     $cache = saveCache($naanList);
     
     ark_log("NAAN Cache: Updated successfully - {$count} NAANs cached", 'info');
@@ -112,15 +173,15 @@ try {
     ]);
     
 } catch (Exception $e) {
-    // If update fails, try to keep the existing cache
+    // If update fails, keep the existing cache (do not overwrite)
     $existingCache = loadCache();
     
     if ($existingCache) {
-        ark_log("NAAN Cache: Update failed, using existing cache - " . $e->getMessage(), 'warning');
+        ark_log("NAAN Cache: Update failed, keeping existing cache - " . $e->getMessage(), 'warning');
         
         echo json_encode([
             'status' => 'warning',
-            'message' => 'Update failed, using existing cache',
+            'message' => 'Update failed, keeping existing cache',
             'error' => $e->getMessage(),
             'count' => $existingCache['count'] ?? 0,
             'timestamp' => date('c')

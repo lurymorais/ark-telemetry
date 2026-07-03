@@ -38,6 +38,10 @@
     Require all denied
 </Files>
 
+<FilesMatch "\.(css|js)$">
+    Require all granted
+</FilesMatch>
+
 # Prevent directory listing
 Options -Indexes
 

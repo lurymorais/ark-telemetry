@@ -11,10 +11,10 @@
  * @throws Exception If config file not found or incomplete
  */
 function getDatabaseConfigFromOJS() {
-    $configFile = dirname(__FILE__, 4) . '/config.inc.php';
+    $configFile = dirname(__FILE__, 2) . '/config.inc.php';
     
     if (!file_exists($configFile)) {
-        throw new Exception('OJS configuration file not found.');
+        throw new Exception('OJS configuration file not found at: ' . $configFile);
     }
     
     $configLines = file($configFile, FILE_IGNORE_NEW_LINES);
@@ -96,18 +96,10 @@ function initializeDatabaseConnection() {
 }
 
 /**
- * Logs messages to file or PHP error log
+ * Log messages to PHP error log only
  */
 function ark_log($message, $level = 'info') {
-    $logDir = dirname(__FILE__) . '/logs';
-    
-    if (!is_dir($logDir)) {
-        @mkdir($logDir, 0755, true);
-    }
-    
-    $logFile = $logDir . '/ark-telemetry.log';
-    $logMessage = date('Y-m-d H:i:s') . " [{$level}] " . $message . PHP_EOL;
-    error_log($logMessage, 3, $logFile);
+    error_log("[ARK-Telemetry] [{$level}] " . $message);
 }
 
 /**
@@ -160,7 +152,22 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
     
-    // Table 3: Rate Limiting (kept as is)
+    // Table 3: Validation Tokens (temporary, one-time use)
+    $ark_pdo->exec("
+        CREATE TABLE IF NOT EXISTS ark_validation_tokens (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            naan VARCHAR(50) NOT NULL,
+            token VARCHAR(64) NOT NULL UNIQUE,
+            expires_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            used_at TIMESTAMP NULL,
+            INDEX idx_token (token),
+            INDEX idx_naan (naan),
+            INDEX idx_expires (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+    
+    // Table 4: Rate Limiting
     $ark_pdo->exec("
         CREATE TABLE IF NOT EXISTS ark_rate_limits (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -175,9 +182,7 @@ try {
             UNIQUE KEY uk_identifier_action (identifier, action)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
-    
-    ark_log("ARK Telemetry system initialized successfully", 'info');
-    
+        
 } catch (Exception $e) {
     $errorMsg = $e->getMessage();
     ark_log("Initialization failed: " . $errorMsg, 'error');

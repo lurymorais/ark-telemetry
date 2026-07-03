@@ -1,36 +1,22 @@
 <?php
 /**
- * Funções auxiliares para o sistema ARK Telemetry
+ * Helper functions for ARK Telemetry system
  * @package ARKTelemetry
+ * @version 3.1.0.0
  */
 
 /**
- * Função para logging
- * 
- * @param string $message Mensagem para log
- * @param string $level Nível do log (debug, info, warning, error)
+ * Log messages to PHP error log
  */
 function ark_log($message, $level = 'info') {
-    if (!defined('ARK_LOG_FILE') || !ARK_LOG_FILE) {
-        // Fallback para error_log do PHP
-        error_log("ARK Telemetry [$level]: " . $message);
-        return;
-    }
-    
-    $logDir = dirname(ARK_LOG_FILE);
-    if (!is_dir($logDir)) {
-        @mkdir($logDir, 0755, true);
-    }
-    
-    $logMessage = date('Y-m-d H:i:s') . " [{$level}] " . $message . PHP_EOL;
-    error_log($logMessage, 3, ARK_LOG_FILE);
+    error_log("[ARK-Telemetry] [{$level}] " . $message);
 }
 
 /**
- * Resposta JSON padronizada com CORS completo
+ * Standardized JSON response with CORS
  * 
- * @param array $data Dados a serem retornados
- * @param int $status_code Código HTTP
+ * @param array $data Data to return
+ * @param int $status_code HTTP status code
  */
 function ark_json_response($data, $status_code = 200) {
     http_response_code($status_code);
@@ -45,15 +31,14 @@ function ark_json_response($data, $status_code = 200) {
 }
 
 /**
- * Rate limiting simplificado usando arquivo temporário
+ * Simplified rate limiting using temporary file
  * 
- * @param string $identifier Identificador único (ex: NAAN, URL)
- * @param int $max_attempts Número máximo de tentativas
- * @param int $window Janela de tempo em segundos
- * @return bool True se permitido, False se excedeu limite
+ * @param string $identifier Unique identifier (e.g., NAAN, URL)
+ * @param int $max_attempts Maximum number of attempts
+ * @param int $window Time window in seconds
+ * @return bool True if allowed, False if limit exceeded
  */
 function ark_check_rate_limit($identifier, $max_attempts = 5, $window = 3600) {
-    // Em desenvolvimento, sempre permite
     if (defined('ARK_DEBUG_MODE') && ARK_DEBUG_MODE === true) {
         return true;
     }
@@ -65,10 +50,8 @@ function ark_check_rate_limit($identifier, $max_attempts = 5, $window = 3600) {
         $data = file_get_contents($rateFile);
         $attempts = (int)$data;
         
-        // Verifica se o arquivo expirou (usando timestamp do arquivo)
         $fileTime = filemtime($rateFile);
         if ($now - $fileTime > $window) {
-            // Reset window
             $attempts = 1;
         } else {
             $attempts++;
@@ -80,7 +63,7 @@ function ark_check_rate_limit($identifier, $max_attempts = 5, $window = 3600) {
         }
         
         file_put_contents($rateFile, $attempts);
-        touch($rateFile, $fileTime); // Mantém timestamp original
+        touch($rateFile, $fileTime);
     } else {
         file_put_contents($rateFile, 1);
     }
@@ -89,10 +72,10 @@ function ark_check_rate_limit($identifier, $max_attempts = 5, $window = 3600) {
 }
 
 /**
- * Sanitiza entrada para prevenir XSS
+ * Sanitizes input to prevent XSS
  * 
- * @param mixed $data Dados a serem sanitizados
- * @return mixed Dados sanitizados
+ * @param mixed $data Data to sanitize
+ * @return mixed Sanitized data
  */
 function ark_sanitize_input($data) {
     if (is_array($data)) {
@@ -102,35 +85,23 @@ function ark_sanitize_input($data) {
 }
 
 /**
- * Valida formato do NAAN
+ * Validates NAAN format
  * 
- * @param string $naan NAAN a ser validado
- * @return bool True se válido
+ * @param string $naan NAAN to validate
+ * @return bool True if valid
  */
 function ark_validate_naan($naan) {
-    // NAAN pode conter letras, números, underscores e dois pontos
     return preg_match('/^[A-Za-z0-9_]{2,40}$/', $naan) === 1;
 }
 
 /**
- * Valida URL
+ * Validates URL
  * 
- * @param string $url URL a ser validada
- * @return bool True se válida
+ * @param string $url URL to validate
+ * @return bool True if valid
  */
 function ark_validate_url($url) {
     return filter_var($url, FILTER_VALIDATE_URL) !== false;
-}
-
-/**
- * Obtém geolocalização por IP (simplificado)
- * 
- * @param string $ip Endereço IP
- * @return array|null Dados de localização
- */
-function ark_get_geolocation($ip = null) {
-    // Implementação opcional para estatísticas
-    return null;
 }
 
 /**
@@ -151,5 +122,5 @@ function ark_queue_response($requestId, $assignedTimestamp, $humanTime, $waitSec
         'human_time' => $humanTime,
         'wait_seconds' => $waitSeconds,
         'message' => 'Your request has been queued. It will be processed at ' . $humanTime
-    ], 202); // HTTP 202 Accepted
+    ], 202);
 }

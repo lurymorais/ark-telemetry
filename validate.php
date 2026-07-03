@@ -132,17 +132,17 @@ $token = null;
 if ($isValid) {
     // Generate a secure random token
     $token = bin2hex(random_bytes(32));
+    $tokenExpiry = 300; // 5 minutes
     
-    // Store token with expiration (1 hour)
     $stmt = $ark_pdo->prepare("
         INSERT INTO ark_validation_tokens (naan, token, expires_at, created_at)
-        VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR), NOW())
+        VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND), NOW())
         ON DUPLICATE KEY UPDATE 
             token = VALUES(token),
             expires_at = VALUES(expires_at),
             created_at = NOW()
     ");
-    $stmt->execute(['ark:' . $naanClean, $token]);
+    $stmt->execute(['ark:' . $naanClean, $token, $tokenExpiry]);
 }
 
 // Log validation attempt
@@ -178,7 +178,7 @@ if ($isValid) {
         'valid' => true,
         'message' => 'NAAN is valid for this domain',
         'token' => $token,
-        'expires_in' => 300, // Token valid for 5 minutes
+        'expires_in' => 300,
         'expires_at' => date('c', strtotime('+5 minutes'))
     ]);
 } else {

@@ -1,7 +1,10 @@
 <?php
 /**
- * API endpoint para total de ARKs (badge para README)
+ * API endpoint for total ARKs (badge for README)
  * URL: https://revistacarnaubais.com.br/ark-telemetry/api.php
+ * 
+ * @package ARKTelemetry
+ * @version 3.1.0.0
  */
 
 require_once __DIR__ . '/bootstrap.php';
@@ -19,7 +22,7 @@ function getTotalArks($pdo, $cacheFile, $cacheTime) {
     }
     
     try {
-        $stmt = $pdo->query("SELECT SUM(arks_count) as total_global FROM ark_journals WHERE status = 'active'");
+        $stmt = $pdo->query("SELECT SUM(arks_count) as total_global FROM ark_statistics");
         $res = $stmt->fetch();
         $total = (int)($res['total_global'] ?? 0);
         
@@ -39,16 +42,17 @@ $totalArks = getTotalArks($ark_pdo, $cacheFile, $cacheTime);
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
+header('Cache-Control: public, max-age=3600');
 
-// Detecta o tema enviado pela URL (padrão é dark se não enviado)
+// Detect theme from URL (default is dark)
 $theme = $_GET['theme'] ?? 'dark';
 
 if ($theme === 'light') {
-    $color = '#2e4832';      // Cor de fundo no modo claro
-    $labelColor = '#f5f5f5'; // Cor da label no modo claro
+    $color = '#2e4832';
+    $labelColor = '#f5f5f5';
 } else {
-    $color = '#3e5c43';      // Cor de fundo no modo escuro (um pouco mais clara para contraste)
-    $labelColor = '#1a1a1a'; // Cor da label no modo escuro
+    $color = '#3e5c43';
+    $labelColor = '#1a1a1a';
 }
 
 echo json_encode([

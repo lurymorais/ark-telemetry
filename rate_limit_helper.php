@@ -1,12 +1,14 @@
 <?php
 /**
- * Rate Limit Helper com Backoff Exponencial (sem bloqueio)
- * Apenas aumenta o tempo de espera a cada falha, nunca bloqueia permanentemente
+ * Rate Limit Helper with Exponential Backoff
+ * Only increases wait time with each failure, never permanently blocks
+ * 
+ * @package ARKTelemetry
+ * @version 3.1.0.0
  */
 
 class RateLimitHelper {
     private $pdo;
-    private $table = 'ark_rate_limits';
     
     public function __construct($pdo) {
         $this->pdo = $pdo;
@@ -31,24 +33,22 @@ class RateLimitHelper {
     }
     
     /**
-     * Calcula o tempo de espera baseado no número de tentativas (backoff exponencial)
-     * Fórmula: min(2^attempts * base_window, max_wait)
+     * Calculates wait time based on number of attempts (exponential backoff)
+     * Formula: min(2^attempts * base_window, max_wait)
      * 
-     * @param int $attempts Número de tentativas (começa em 1)
-     * @param int $base_window Janela base em segundos (ex: 60)
-     * @param int $max_wait Espera máxima em segundos (ex: 86400 = 24h)
-     * @return int Segundos de espera
+     * @param int $attempts Number of attempts (starts at 1)
+     * @param int $base_window Base window in seconds (e.g., 60)
+     * @param int $max_wait Maximum wait in seconds (e.g., 86400 = 24h)
+     * @return int Wait seconds
      */
     private function calculateWaitTime($attempts, $base_window = 60, $max_wait = 86400) {
-        // Para tentativas normais (1, 2, 3, 4, 5...)
-        // 2^attempts * base_window, mas limitado a max_wait
         $wait = pow(2, $attempts - 1) * $base_window;
         return min($wait, $max_wait);
     }
     
     /**
-     * Verifica se a ação é permitida
-     * Retorna: ['allowed' => bool, 'wait_seconds' => int, 'message' => string]
+     * Checks if the action is allowed
+     * Returns: ['allowed' => bool, 'wait_seconds' => int, 'message' => string]
      */
     public function check($identifier, $action, $base_window = 60) {
         $stmt = $this->pdo->prepare("
@@ -59,12 +59,10 @@ class RateLimitHelper {
         $stmt->execute([$identifier, $action]);
         $record = $stmt->fetch();
         
-        // Sem registro - permitido
         if (!$record) {
             return ['allowed' => true, 'wait_seconds' => 0, 'message' => '', 'attempts' => 0];
         }
         
-        // Verifica se ainda está no tempo de espera
         if ($record['next_allowed_at'] && strtotime($record['next_allowed_at']) > time()) {
             $remaining = strtotime($record['next_allowed_at']) - time();
             $waitMinutes = ceil($remaining / 60);
@@ -73,7 +71,7 @@ class RateLimitHelper {
                 'allowed' => false, 
                 'wait_seconds' => $remaining,
                 'wait_minutes' => $waitMinutes,
-                'message' => "Muitas tentativas. Aguarde {$waitMinutes} minutos antes de tentar novamente.",
+                'message' => "Too many attempts. Please wait {$waitMinutes} minutes before trying again.",
                 'attempts' => $record['attempts']
             ];
         }
@@ -82,10 +80,9 @@ class RateLimitHelper {
     }
     
     /**
-     * Registra uma tentativa (apenas falhas aumentam o contador)
-     * Sucesso: reseta o contador
-     * Falha: incrementa tentativas e atualiza próximo tempo permitido
-     * Calcula o tempo de espera baseado nas tentativas atuais + 1
+     * Records an attempt (only failures increment counter)
+     * Success: resets counter
+     * Failure: increments attempts and updates next allowed time
      */
     public function recordAttempt($identifier, $action, $success = true, $base_window = 60) {
         if ($success) {
@@ -113,7 +110,7 @@ class RateLimitHelper {
     }
     
     /**
-     * Obtém número de tentativas atuais
+     * Gets current number of attempts
      */
     private function getAttempts($identifier, $action) {
         $stmt = $this->pdo->prepare("
@@ -126,7 +123,7 @@ class RateLimitHelper {
     }
     
     /**
-     * Limpa registros antigos (executar em cron)
+     * Cleans old records (run in cron)
      */
     public function cleanOldRecords($hours = 24) {
         $stmt = $this->pdo->prepare("
@@ -137,7 +134,7 @@ class RateLimitHelper {
     }
     
     /**
-     * Obtém estatísticas para debug
+     * Gets statistics for debugging
      */
     public function getStats($identifier, $action) {
         $stmt = $this->pdo->prepare("
