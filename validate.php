@@ -3,7 +3,7 @@
  * NAAN Validation Endpoint - v3.1.0.0
  * URL: POST https://revistacarnaubais.com.br/ark-telemetry/validate
  * 
- * Validates NAAN against n2t.net and returns a temporary token for data submission.
+ * Validates NAAN using local cache first, then n2t.net API as fallback.
  * 
  * @package ARKTelemetry
  * @version 3.1.0.0
@@ -72,61 +72,81 @@ if (empty($domain) || !preg_match('/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}
     ark_json_response(['valid' => false, 'error' => 'Invalid domain format']);
 }
 
-// ========== VALIDATION AGAINST n2t.net ==========
+// ========== VALIDATION ==========
 
-$metadataUrl = 'https://n2t.net/ark:' . $naanClean;
+$registeredDomain = null;
+$cacheFile = __DIR__ . '/naan_cache.json';
 
-$ch = curl_init();
-curl_setopt($ch, CURLOPT_URL, $metadataUrl);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
-curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
-curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Plugin-Validator/3.1.0.0');
-
-$response = curl_exec($ch);
-$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$curlError = curl_error($ch);
-curl_close($ch);
-
-if ($httpCode !== 200 || empty($response)) {
-    $rateLimit->recordAttempt($ip, 'validate_naan', false, 60);
-    
-    ark_log("NAAN validation failed for ark:{$naanClean} - HTTP {$httpCode}", 'warning');
-    
-    http_response_code(400);
-    ark_json_response([
-        'valid' => false,
-        'error' => 'NAAN not found on n2t.net registry'
-    ]);
+// Try to get from cache first
+if (file_exists($cacheFile)) {
+    $cache = json_decode(file_get_contents($cacheFile), true);
+    if ($cache && isset($cache['data'][$naanClean])) {
+        $registeredDomain = $cache['data'][$naanClean];
+    } else {
+    }
 }
 
-$metadata = json_decode($response, true);
+// ========== FALLBACK ==========
 
-if (empty($metadata) || empty($metadata['properties']['where'])) {
-    $rateLimit->recordAttempt($ip, 'validate_naan', false, 60);
+if (!$registeredDomain) {
     
-    ark_log("Invalid metadata response for ark:{$naanClean}", 'warning');
+    $metadataUrl = 'https://n2t.net/ark:' . $naanClean;
     
-    http_response_code(400);
-    ark_json_response([
-        'valid' => false,
-        'error' => 'NAAN metadata incomplete'
-    ]);
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $metadataUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Plugin-Validator/3.1.0.0');
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+    
+    if ($httpCode !== 200 || empty($response)) {
+        $rateLimit->recordAttempt($ip, 'validate_naan', false, 60);
+        ark_log("NAAN validation failed for ark:{$naanClean} - HTTP {$httpCode}", 'warning');
+        http_response_code(400);
+        ark_json_response([
+            'valid' => false,
+            'error' => 'NAAN not found on n2t.net registry'
+        ]);
+    }
+    
+    $metadata = json_decode($response, true);
+    
+    if (empty($metadata) || empty($metadata['properties']['where'])) {
+        $rateLimit->recordAttempt($ip, 'validate_naan', false, 60);
+        ark_log("Invalid metadata response for ark:{$naanClean}", 'warning');
+        http_response_code(400);
+        ark_json_response([
+            'valid' => false,
+            'error' => 'NAAN metadata incomplete'
+        ]);
+    }
+    
+    $registeredWhere = rtrim($metadata['properties']['where'] ?? '', '/');
+    $registeredDomain = preg_replace('#^https?://#', '', $registeredWhere);
+    $registeredDomain = rtrim($registeredDomain, '/');
 }
+
 
 // ========== DOMAIN COMPARISON ==========
 
-$registeredWhere = rtrim($metadata['properties']['where'] ?? '', '/');
-$registeredDomain = preg_replace('#^https?://#', '', $registeredWhere);
-$registeredDomain = rtrim($registeredDomain, '/');
+// Normalize both domains (remove www., lowercase)
+$domainNormalized = preg_replace('/^www\./', '', $domain);
+$domainNormalized = strtolower($domainNormalized);
 
-$isValid = ($registeredDomain === $domain);
+$registeredNormalized = preg_replace('/^www\./', '', $registeredDomain);
+$registeredNormalized = strtolower($registeredNormalized);
+
+$isValid = ($registeredNormalized === $domainNormalized);
 
 // ========== GENERATE TEMPORARY TOKEN ==========
-// Only if validation is successful
 
 $token = null;
 if ($isValid) {
@@ -166,6 +186,8 @@ try {
 } catch (Exception $e) {
     ark_log("Failed to log validation: " . $e->getMessage(), 'error');
 }
+
+// ========== RESPONSE ==========
 
 if ($isValid) {
     // Validation successful
