@@ -76,12 +76,101 @@ if (empty($domain) || !preg_match('/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}
 
 $registeredDomain = null;
 $cacheFile = __DIR__ . '/naan_cache.json';
+$cacheCreated = false;
 
 // Try to get from cache first
 if (file_exists($cacheFile)) {
     $cache = json_decode(file_get_contents($cacheFile), true);
     if ($cache && isset($cache['data'][$naanClean])) {
         $registeredDomain = $cache['data'][$naanClean];
+        ark_log("NAAN {$naanClean} found in cache", 'debug');
+    } else {
+        ark_log("NAAN {$naanClean} not found in cache", 'debug');
+    }
+} else {
+    // Cache doesn't exist - create it directly (without including naan_cache.php)
+    ark_log("Cache file not found, creating from n2t.net...", 'info');
+    
+    try {
+        $url = 'https://cdluc3.github.io/naan_reg_priv/naan_registry.txt';
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry-Cache/3.1.0.0');
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode === 200 && !empty($response)) {
+            // Parse registry
+            $naanMap = [];
+            $lines = explode("\n", $response);
+            $currentNaan = null;
+            $currentWhere = null;
+            $inEntry = false;
+            
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (empty($line) || strpos($line, '#') === 0) continue;
+                
+                if (strpos($line, 'naa:') === 0) {
+                    if ($currentNaan && $currentWhere) {
+                        $naanMap[$currentNaan] = $currentWhere;
+                    }
+                    $currentNaan = null;
+                    $currentWhere = null;
+                    $inEntry = true;
+                    continue;
+                }
+                
+                if (!$inEntry) continue;
+                
+                if (strpos($line, 'what:') === 0) {
+                    $currentNaan = trim(substr($line, 5));
+                    $currentNaan = preg_replace('/[^0-9]/', '', $currentNaan);
+                }
+                
+                if (strpos($line, 'where:') === 0) {
+                    $currentWhere = trim(substr($line, 6));
+                    $currentWhere = preg_replace('#^https?://#', '', $currentWhere);
+                    $currentWhere = rtrim($currentWhere, '/');
+                }
+                
+                if ($currentNaan && $currentWhere && !empty($currentWhere)) {
+                    $naanMap[$currentNaan] = $currentWhere;
+                    $currentNaan = null;
+                    $currentWhere = null;
+                    $inEntry = false;
+                }
+            }
+            
+            if ($currentNaan && $currentWhere && !empty($currentWhere)) {
+                $naanMap[$currentNaan] = $currentWhere;
+            }
+            
+            if (!empty($naanMap)) {
+                $cacheData = [
+                    'timestamp' => time(),
+                    'expires_at' => time() + 86400,
+                    'data' => $naanMap,
+                    'count' => count($naanMap),
+                    'version' => '3.1.0.0'
+                ];
+                
+                file_put_contents($cacheFile, json_encode($cacheData, JSON_PRETTY_PRINT));
+                $registeredDomain = $naanMap[$naanClean] ?? null;
+                $cacheCreated = true;
+                
+                ark_log("Cache created with " . count($naanMap) . " NAANs", 'info');
+            }
+        }
+    } catch (Exception $e) {
+        ark_log("Failed to create cache: " . $e->getMessage(), 'warning');
     }
 }
 

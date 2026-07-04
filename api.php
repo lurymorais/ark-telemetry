@@ -11,7 +11,7 @@ require_once __DIR__ . '/bootstrap.php';
 global $ark_pdo;
 
 $cacheFile = __DIR__ . '/api_cache.json';
-$cacheTime = 3600;
+$cacheTime = 86400; // 24 hours
 
 function getTotalArks($pdo, $cacheFile, $cacheTime) {
     if (file_exists($cacheFile)) {
@@ -42,7 +42,7 @@ $totalArks = getTotalArks($ark_pdo, $cacheFile, $cacheTime);
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
-header('Cache-Control: public, max-age=3600');
+header('Cache-Control: public, max-age=86400');
 
 // Detect theme from URL (default is dark)
 $theme = $_GET['theme'] ?? 'dark';

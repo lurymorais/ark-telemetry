@@ -8,6 +8,19 @@
  * @version 3.1.0.0
  */
 
+// detect cli or web execution
+$isCli = (php_sapi_name() === 'cli');
+
+if (!$isCli) {
+    header('Content-Type: application/json');
+    http_response_code(403);
+    echo json_encode([
+        'error' => 'This script can only be executed via command line (CLI)',
+        'sapi' => php_sapi_name()
+    ]);
+    exit;
+}
+
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/rate_limit_helper.php';
 
@@ -15,6 +28,17 @@ global $ark_pdo;
 
 define('CACHE_FILE', __DIR__ . '/naan_cache.json');
 define('CACHE_EXPIRY', 86400); // 24 hours
+
+// Check if can write to the cache directory
+if (!is_writable(__DIR__)) {
+    error_log("[NAAN-Cache] ERROR: Directory not writable: " . __DIR__);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Cache directory is not writable',
+        'directory' => __DIR__
+    ]);
+    exit(1);
+}
 
 /**
  * Fetch active NAANs from n2t.net registry
@@ -99,17 +123,43 @@ function fetchNaanList() {
 }
 
 /**
- * Save cache to file (overwrites existing)
+ * Save cache to file with atomic write
  */
 function saveCache($data) {
     $cache = [
         'timestamp' => time(),
         'expires_at' => time() + CACHE_EXPIRY,
         'data' => $data,
-        'count' => count($data)
+        'count' => count($data),
+        'version' => '3.1.0.0'
     ];
     
-    file_put_contents(CACHE_FILE, json_encode($cache, JSON_PRETTY_PRINT));
+    $json = json_encode($cache, JSON_PRETTY_PRINT);
+    
+    // Write to temp file first, then rename (atomic operation)
+    $tempFile = CACHE_FILE . '.tmp';
+    if (file_put_contents($tempFile, $json) === false) {
+        throw new Exception("Failed to write temporary cache file");
+    }
+    
+    // Verify JSON is valid
+    $test = json_decode(file_get_contents($tempFile), true);
+    if ($test === null) {
+        unlink($tempFile);
+        throw new Exception("Invalid JSON generated");
+    }
+    
+    // Atomic rename
+    if (!rename($tempFile, CACHE_FILE)) {
+        unlink($tempFile);
+        throw new Exception("Failed to move cache file");
+    }
+    
+    // Verify file was written
+    if (!file_exists(CACHE_FILE)) {
+        throw new Exception("Cache file not found after write");
+    }
+    
     return $cache;
 }
 
@@ -122,6 +172,10 @@ function loadCache() {
     }
     
     $content = file_get_contents(CACHE_FILE);
+    if ($content === false) {
+        return null;
+    }
+    
     $cache = json_decode($content, true);
     
     if (empty($cache) || !isset($cache['data'])) {
@@ -133,21 +187,29 @@ function loadCache() {
 
 /**
  * Clean up old records from database
- * - Validation logs: delete after 24 months
- * - Rate limits: delete after 24 hours
- * - Tokens: delete after expiration (expires_at)
- * - Statistics: never deleted (cumulative data)
  */
 function cleanupOldRecords($pdo) {
     $deleted = [];
     
+    // Validation logs: 24 months
     $stmt = $pdo->prepare("
         DELETE FROM ark_validations 
         WHERE validated_at < DATE_SUB(NOW(), INTERVAL 24 MONTH)
+        AND status != 'consent_change'
     ");
     $stmt->execute();
     $deleted['validations'] = $stmt->rowCount();
     
+    // Consent logs: 5 years
+    $stmt = $pdo->prepare("
+        DELETE FROM ark_validations 
+        WHERE validated_at < DATE_SUB(NOW(), INTERVAL 5 YEAR)
+        AND status = 'consent_change'
+    ");
+    $stmt->execute();
+    $deleted['consent_logs'] = $stmt->rowCount();
+    
+    // Rate limits: 24 hours
     $stmt = $pdo->prepare("
         DELETE FROM ark_rate_limits 
         WHERE last_attempt < DATE_SUB(NOW(), INTERVAL 24 HOUR)
@@ -155,58 +217,72 @@ function cleanupOldRecords($pdo) {
     $stmt->execute();
     $deleted['rate_limits'] = $stmt->rowCount();
     
+    // Tokens: expired
     $stmt = $pdo->prepare("
         DELETE FROM ark_validation_tokens 
         WHERE expires_at < NOW()
     ");
     $stmt->execute();
     $deleted['tokens'] = $stmt->rowCount();
-        
+    
     return $deleted;
 }
 
 // ============ MAIN EXECUTION ============
 
-ark_log("NAAN Cache: Starting update and cleanup", 'info');
+$log = function($message, $level = 'info') {
+    error_log("[NAAN-Cache] [{$level}] " . $message);
+};
+
+$log("Starting NAAN cache update", 'info');
 
 try {
     // 1. Fetch fresh NAAN list
+    $log("Fetching NAAN list from n2t.net...", 'info');
     $naanList = fetchNaanList();
     $count = count($naanList);
+    $log("Fetched {$count} NAANs", 'info');
     
-    // 2. Save to cache
+    // 2. Save to cache (always update)
+    $log("Saving to cache file...", 'info');
     $cache = saveCache($naanList);
+    $log("Cache saved with {$cache['count']} NAANs", 'info');
     
     // 3. Cleanup old records
+    $log("Cleaning old records...", 'info');
     $deleted = cleanupOldRecords($ark_pdo);
+    $log("Cleaned: {$deleted['validations']} validations, {$deleted['rate_limits']} rate limits, {$deleted['tokens']} tokens, {$deleted['consent_logs']} consent logs", 'info');
     
-    ark_log("NAAN Cache: Updated successfully - {$count} NAANs cached", 'info');
-    ark_log("Cleanup: deleted {$deleted['validations']} validations, {$deleted['rate_limits']} rate limits, {$deleted['tokens']} tokens", 'info');
-    
+    // 4. Output summary
     echo json_encode([
         'status' => 'success',
-        'message' => "NAAN cache updated and cleanup completed",
+        'message' => 'NAAN cache updated and cleanup completed',
         'count' => $count,
         'cleanup' => $deleted,
+        'cache_file' => CACHE_FILE,
+        'cache_size' => filesize(CACHE_FILE),
         'timestamp' => date('c')
-    ]);
+    ], JSON_PRETTY_PRINT);
+    
+    $log("Cache update completed successfully", 'info');
     
 } catch (Exception $e) {
     // If update fails, keep the existing cache
     $existingCache = loadCache();
     
     if ($existingCache) {
-        ark_log("NAAN Cache: Update failed, keeping existing cache - " . $e->getMessage(), 'warning');
+        $log("Update failed, keeping existing cache - " . $e->getMessage(), 'warning');
         
         echo json_encode([
             'status' => 'warning',
             'message' => 'Update failed, keeping existing cache',
             'error' => $e->getMessage(),
             'count' => $existingCache['count'] ?? 0,
+            'cache_age' => time() - ($existingCache['timestamp'] ?? time()),
             'timestamp' => date('c')
-        ]);
+        ], JSON_PRETTY_PRINT);
     } else {
-        ark_log("NAAN Cache: Update failed and no cache available - " . $e->getMessage(), 'error');
+        $log("Update failed and no cache available - " . $e->getMessage(), 'error');
         
         echo json_encode([
             'status' => 'error',
@@ -214,4 +290,5 @@ try {
             'error' => $e->getMessage()
         ]);
     }
+    exit(1);
 }
