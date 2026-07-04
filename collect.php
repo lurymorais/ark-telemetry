@@ -46,8 +46,67 @@ if (empty($input)) {
     ark_json_response(['error' => 'Invalid JSON input']);
 }
 
+// ========== REGISTRATION REQUEST ==========
+if (isset($input['action']) && $input['action'] === 'register') {
+    $naan = trim($input['naan'] ?? '');
+    $domain = trim($input['domain'] ?? '');
+    $privateKey = trim($input['private_key'] ?? '');
+    $pluginVersion = trim($input['plugin_version'] ?? '');
+    
+    if (empty($naan) || empty($domain) || empty($privateKey)) {
+        http_response_code(400);
+        ark_json_response(['error' => 'Missing required fields: naan, domain, private_key']);
+    }
+    
+    try {
+        // Check if this NAAN already exists
+        $stmt = $ark_pdo->prepare("
+            SELECT id FROM ark_statistics WHERE naan = ?
+        ");
+        $stmt->execute([$naan]);
+        $existing = $stmt->fetch();
+        
+        if ($existing) {
+            // Update existing record with private key
+            $stmt = $ark_pdo->prepare("
+                UPDATE ark_statistics 
+                SET private_key = ?, 
+                    plugin_version = ?,
+                    received_at = NOW()
+                WHERE naan = ?
+            ");
+            $stmt->execute([$privateKey, $pluginVersion, $naan]);
+        } else {
+            // Insert new record with private key
+            $stmt = $ark_pdo->prepare("
+                INSERT INTO ark_statistics (naan, private_key, plugin_version, received_at)
+                VALUES (?, ?, ?, NOW())
+            ");
+            $stmt->execute([$naan, $privateKey, $pluginVersion]);
+        }
+        
+        error_log("[ARK-Telemetry] Plugin registered: {$naan} at {$domain}");
+        
+        http_response_code(200);
+        ark_json_response([
+            'status' => 'registered',
+            'message' => 'Plugin key registered successfully',
+            'naan' => $naan
+        ]);
+        
+    } catch (Exception $e) {
+        error_log("[ARK-Telemetry] Registration error: " . $e->getMessage());
+        http_response_code(500);
+        ark_json_response(['error' => 'Failed to register plugin key']);
+    }
+    
+    exit;
+}
+
+// ========== STATISTICS COLLECTION ==========
+
 // Validate required fields
-$requiredFields = ['naan', 'arks_count', 'plugin_version', 'token'];
+$requiredFields = ['naan', 'arks_count', 'plugin_version', 'token', 'private_key'];
 foreach ($requiredFields as $field) {
     if (!isset($input[$field])) {
         $rateLimit->recordAttempt($ip, 'collect_statistics', false, 60);
@@ -60,6 +119,7 @@ $naan = trim($input['naan']);
 $arksCount = (int) $input['arks_count'];
 $pluginVersion = trim($input['plugin_version']);
 $token = trim($input['token']);
+$privateKey = trim($input['private_key']);
 $domain = trim($input['domain'] ?? '');
 
 // Validate NAAN format
@@ -76,8 +136,7 @@ if (empty($domain)) {
     $domain = rtrim($domain, '/');
 }
 
-// ========== PLUGIN IDENTITY VERIFICATION ==========
-// Check if identity.txt exists on the plugin domain
+// ========== LAYER 1: VERIFY identity.txt ==========
 $identityUrl = "https://{$domain}/plugins/pubIds/ark/identity.txt";
 
 $ch = curl_init();
@@ -87,29 +146,54 @@ curl_setopt($ch, CURLOPT_TIMEOUT, 5);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
 curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry/3.1.0.0');
-curl_setopt($ch, CURLOPT_NOBODY, true); // Only check if file exists
+curl_setopt($ch, CURLOPT_NOBODY, true);
 
 $httpCode = 0;
-$curlError = '';
-
 try {
     curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
 } catch (Exception $e) {
-    $curlError = $e->getMessage();
+    $httpCode = 0;
 }
-
 curl_close($ch);
 
 if ($httpCode !== 200) {
     $rateLimit->recordAttempt($ip, 'collect_statistics', false, 60);
     http_response_code(403);
     ark_json_response([
-        'error' => 'Plugin identity not verified',
-        'message' => 'The plugin could not prove it is installed on this domain',
-        'required_file' => $identityUrl,
-        'http_code' => $httpCode
+        'error' => 'Plugin identity file not found',
+        'message' => 'The plugin is not installed on this domain',
+        'required_file' => $identityUrl
+    ]);
+}
+
+// ========== LAYER 2: VERIFY PRIVATE KEY ==========
+$stmt = $ark_pdo->prepare("
+    SELECT private_key FROM ark_statistics 
+    WHERE naan = ?
+    ORDER BY received_at DESC 
+    LIMIT 1
+");
+$stmt->execute([$naan]);
+$record = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$record || empty($record['private_key'])) {
+    $rateLimit->recordAttempt($ip, 'collect_statistics', false, 60);
+    http_response_code(403);
+    ark_json_response([
+        'error' => 'Plugin not registered',
+        'message' => 'This NAAN has not registered a private key',
+        'action' => 'Please install the plugin properly'
+    ]);
+}
+
+// Compare received key with stored key using hash_equals for timing safety
+if (!hash_equals($record['private_key'], $privateKey)) {
+    $rateLimit->recordAttempt($ip, 'collect_statistics', false, 60);
+    http_response_code(403);
+    ark_json_response([
+        'error' => 'Invalid private key',
+        'message' => 'The plugin private key does not match our records'
     ]);
 }
 
@@ -134,7 +218,7 @@ if (!$tokenRecord) {
     ]);
 }
 
-// ========== CHECK TELEMETRY CONSENT (OPT-IN) ==========
+// ========== CHECK TELEMETRY CONSENT ==========
 $stmt = $ark_pdo->prepare("
     SELECT setting_value FROM plugin_settings
     WHERE plugin_name = 'arkpubidplugin'
@@ -175,8 +259,9 @@ if (!preg_match('/^\d+\.\d+\.\d+\.\d+(-[a-z0-9]+)?$/i', $pluginVersion)) {
 
 // ========== STORE STATISTICS ==========
 try {
+    // Check if this NAAN already exists
     $stmt = $ark_pdo->prepare("
-        SELECT id, arks_count, plugin_version, received_at 
+        SELECT id, arks_count, plugin_version, private_key, received_at 
         FROM ark_statistics 
         WHERE naan = ?
         ORDER BY received_at DESC 
@@ -186,6 +271,7 @@ try {
     $existing = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if ($existing) {
+        // Update existing record preserving the private key
         $stmt = $ark_pdo->prepare("
             UPDATE ark_statistics 
             SET arks_count = ?, 
@@ -197,11 +283,12 @@ try {
         
         error_log("[ARK-Telemetry] Statistics updated for ark:{$naanClean} - {$arksCount} ARKs (v{$pluginVersion})");
     } else {
+        // Insert new record with private key
         $stmt = $ark_pdo->prepare("
-            INSERT INTO ark_statistics (naan, arks_count, plugin_version, received_at)
-            VALUES (?, ?, ?, NOW())
+            INSERT INTO ark_statistics (naan, arks_count, private_key, plugin_version, received_at)
+            VALUES (?, ?, ?, ?, NOW())
         ");
-        $stmt->execute(['ark:' . $naanClean, $arksCount, $pluginVersion]);
+        $stmt->execute(['ark:' . $naanClean, $arksCount, $privateKey, $pluginVersion]);
         
         error_log("[ARK-Telemetry] Statistics inserted for ark:{$naanClean} - {$arksCount} ARKs (v{$pluginVersion})");
     }
@@ -218,6 +305,7 @@ try {
         'status' => 'accepted',
         'message' => 'Statistics recorded successfully',
         'identity_verified' => true,
+        'key_verified' => true,
         'token_validated_at' => $tokenRecord['created_at'],
         'received_at' => date('c')
     ]);
