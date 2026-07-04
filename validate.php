@@ -82,7 +82,6 @@ if (file_exists($cacheFile)) {
     $cache = json_decode(file_get_contents($cacheFile), true);
     if ($cache && isset($cache['data'][$naanClean])) {
         $registeredDomain = $cache['data'][$naanClean];
-    } else {
     }
 }
 

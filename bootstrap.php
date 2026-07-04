@@ -116,6 +116,38 @@ function ark_json_response($data, $status_code = 200) {
     exit;
 }
 
+/**
+ * Verify plugin identity by checking if identity.txt exists
+ * 
+ * @param string $domain The domain to check
+ * @return bool True if identity file exists
+ */
+function verifyPluginIdentity($domain) {
+    $identityUrl = "https://{$domain}/plugins/pubIds/ark/identity.txt";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $identityUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry/3.1.0.0');
+    curl_setopt($ch, CURLOPT_NOBODY, true); // Only check if file exists
+    
+    $httpCode = 0;
+    
+    try {
+        curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    } catch (Exception $e) {
+        $httpCode = 0;
+    }
+    
+    curl_close($ch);
+    
+    return ($httpCode === 200);
+}
+
 // ============================================
 // DATABASE INITIALIZATION
 // ============================================
@@ -137,18 +169,22 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
     
-    // Table 2: NAAN Validations (audit trail)
+    // Table 2: NAAN Validations (audit trail with consent tracking)
     $ark_pdo->exec("
         CREATE TABLE IF NOT EXISTS ark_validations (
             id INT AUTO_INCREMENT PRIMARY KEY,
             naan VARCHAR(50) NOT NULL,
             domain VARCHAR(255) NOT NULL,
-            status ENUM('success', 'failed') DEFAULT 'success',
+            status ENUM('success', 'failed', 'consent_change') DEFAULT 'success',
             message TEXT,
             validated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            consent_action ENUM('enabled', 'disabled', 'unchanged') NULL,
+            consent_previous_value VARCHAR(10) NULL,
+            consent_changed_at TIMESTAMP NULL,
             INDEX idx_status (status),
             INDEX idx_naan (naan),
-            INDEX idx_domain (domain)
+            INDEX idx_domain (domain),
+            INDEX idx_consent (consent_action)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
     
@@ -182,6 +218,21 @@ try {
             UNIQUE KEY uk_identifier_action (identifier, action)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+    
+    // Add consent columns if they don't exist (for existing installations)
+    try {
+        $ark_pdo->exec("
+            ALTER TABLE ark_validations 
+            ADD COLUMN IF NOT EXISTS consent_action ENUM('enabled', 'disabled', 'unchanged') NULL AFTER status,
+            ADD COLUMN IF NOT EXISTS consent_previous_value VARCHAR(10) NULL AFTER consent_action,
+            ADD COLUMN IF NOT EXISTS consent_changed_at TIMESTAMP NULL AFTER consent_previous_value,
+            ADD INDEX IF NOT EXISTS idx_consent (consent_action),
+            MODIFY status ENUM('success', 'failed', 'consent_change') DEFAULT 'success'
+        ");
+    } catch (PDOException $e) {
+        // Columns may already exist or version differences - ignore
+        error_log("[ARK] Notice during schema update: " . $e->getMessage());
+    }
         
 } catch (Exception $e) {
     $errorMsg = $e->getMessage();
