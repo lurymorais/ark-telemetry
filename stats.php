@@ -53,7 +53,7 @@ $translations = [
         'active_journals' => 'Revistas ativas',
         'last_update' => 'Última atualização',
         'next_update' => 'Próxima atualização',
-        'journals_over_time' => 'Crescimento de Revistas',
+        'journals_over_time' => 'Periódicos',
         'arks_over_time' => 'Crescimento de ARKs',
         'footer_text' => 'Estatísticas atualizadas automaticamente uma vez por semana.',
         'plugin_link' => 'ARK Plugin',
@@ -70,8 +70,8 @@ $translations = [
         'active_journals' => 'Revistas activas',
         'last_update' => 'Última actualización',
         'next_update' => 'Próxima actualización',
-        'journals_over_time' => 'Crecimiento de Revistas',
-        'arks_over_time' => 'Crecimiento de ARKs',
+        'journals_over_time' => 'Revistas a lo largo del tiempo',
+        'arks_over_time' => 'ARKs a lo largo del tiempo',
         'footer_text' => 'Estadísticas actualizadas automáticamente una vez por semana.',
         'plugin_link' => 'Plugin ARK',
         'day' => 'd',
@@ -87,8 +87,8 @@ $translations = [
         'active_journals' => 'Active journals',
         'last_update' => 'Last update',
         'next_update' => 'Next update',
-        'journals_over_time' => 'Journal Growth',
-        'arks_over_time' => 'ARK Growth',
+        'journals_over_time' => 'Journals Over Time',
+        'arks_over_time' => 'ARKs Over Time',
         'footer_text' => 'Statistics are automatically updated once per week.',
         'plugin_link' => 'ARK Plugin',
         'day' => 'd',
@@ -105,49 +105,133 @@ $t = $translations[$lang];
 $cacheFile = __DIR__ . '/stats_cache.json';
 $weekInSeconds = 7 * 24 * 3600;
 
-function generateCache($pdo) {
+/**
+ * Load existing cache data
+ * 
+ * @param string $cacheFile Path to cache file
+ * @return array|null Cache data or null if invalid
+ */
+function loadExistingCache($cacheFile) {
+    if (file_exists($cacheFile)) {
+        $content = file_get_contents($cacheFile);
+        $data = json_decode($content, true);
+        if ($data && isset($data['generated_at'])) {
+            return $data;
+        }
+    }
+    return null;
+}
+
+/**
+ * Generate or update cache preserving historical data
+ * 
+ * @param PDO $pdo Database connection
+ * @param string $cacheFile Path to cache file
+ * @return array Statistics data
+ */
+function generateCache($pdo, $cacheFile) {
     try {
-        // Total ARKs
+        // Load existing cache to preserve history
+        $existingCache = loadExistingCache($cacheFile);
+        
+        $stmtHistory = $pdo->query("
+            SELECT 
+                DATE_FORMAT(received_at, '%Y-%m') as month,
+                SUM(arks_count) as arks_count,
+                COUNT(DISTINCT naan) as journals_count
+            FROM ark_statistics
+            WHERE received_at > DATE_SUB(NOW(), INTERVAL 24 MONTH)
+            GROUP BY DATE_FORMAT(received_at, '%Y-%m')
+            ORDER BY month ASC
+        ");
+        $dbHistory = $stmtHistory->fetchAll();
+        
+        // Initialize history arrays
+        $months = [];
+        $arksHistory = [];
+        $journalsHistory = [];
+        
+        // Use existing cache as base if available
+        if ($existingCache && isset($existingCache['months']) && !empty($existingCache['months'])) {
+            $months = $existingCache['months'];
+            $arksHistory = $existingCache['arks_history'];
+            $journalsHistory = $existingCache['journals_history'];
+        }
+        
+        // Merge with database data if available
+        if (!empty($dbHistory)) {
+            // Build database data map by month
+            $dbDataMap = [];
+            foreach ($dbHistory as $row) {
+                $dbDataMap[$row['month']] = [
+                    'arks' => (int)$row['arks_count'],
+                    'journals' => (int)$row['journals_count']
+                ];
+            }
+            
+            // Merge months from cache and database
+            $allMonths = array_unique(array_merge($months, array_keys($dbDataMap)));
+            sort($allMonths);
+            
+            // Rebuild complete history
+            $newMonths = [];
+            $newArksHistory = [];
+            $newJournalsHistory = [];
+            
+            $cumulativeArks = 0;
+            $cumulativeJournals = 0;
+            
+            foreach ($allMonths as $month) {
+                $newMonths[] = $month;
+                
+                if (isset($dbDataMap[$month])) {
+                    $cumulativeArks += $dbDataMap[$month]['arks'];
+                    $cumulativeJournals += $dbDataMap[$month]['journals'];
+                }
+                
+                $newArksHistory[] = $cumulativeArks;
+                $newJournalsHistory[] = $cumulativeJournals;
+            }
+            
+            $months = $newMonths;
+            $arksHistory = $newArksHistory;
+            $journalsHistory = $newJournalsHistory;
+        }
+        
+        // If no history exists, create with current data
+        if (empty($months)) {
+            // Get current totals
+            $stmtTotal = $pdo->query("SELECT SUM(arks_count) as total_global FROM ark_statistics");
+            $resTotal = $stmtTotal->fetch();
+            $totalGlobal = $resTotal['total_global'] ?? 0;
+            
+            $stmtJournals = $pdo->query("SELECT COUNT(DISTINCT naan) as total_revistas FROM ark_statistics");
+            $resJournals = $stmtJournals->fetch();
+            $totalRevistas = $resJournals['total_revistas'] ?? 0;
+            
+            $currentMonth = date('Y-m');
+            $months[] = $currentMonth;
+            $arksHistory[] = (int)$totalGlobal;
+            $journalsHistory[] = (int)$totalRevistas;
+        }
+        
+        // Get current totals for display
         $stmtTotal = $pdo->query("SELECT SUM(arks_count) as total_global FROM ark_statistics");
         $resTotal = $stmtTotal->fetch();
         $totalGlobal = $resTotal['total_global'] ?? 0;
         
-        // Total unique journals
         $stmtJournals = $pdo->query("SELECT COUNT(DISTINCT naan) as total_revistas FROM ark_statistics");
         $resJournals = $stmtJournals->fetch();
         $totalRevistas = $resJournals['total_revistas'] ?? 0;
         
-        // ===== HISTORICAL DATA FOR CHARTS =====
-        // Group by month for the last 12 months
-        $stmtHistory = $pdo->query("
-            SELECT 
-                DATE_FORMAT(received_at, '%Y-%m') as month,
-                COUNT(DISTINCT naan) as journals,
-                SUM(arks_count) as arks
-            FROM ark_statistics
-            WHERE received_at > DATE_SUB(NOW(), INTERVAL 12 MONTH)
-            GROUP BY DATE_FORMAT(received_at, '%Y-%m')
-            ORDER BY month ASC
-        ");
-        $history = $stmtHistory->fetchAll();
-        
-        // Prepare data for charts
-        $months = [];
-        $journalsHistory = [];
-        $arksHistory = [];
-        
-        $cumulativeJournals = 0;
-        $cumulativeArks = 0;
-        
-        foreach ($history as $row) {
-            $months[] = $row['month'];
-            $cumulativeJournals += (int)$row['journals'];
-            $cumulativeArks += (int)$row['arks'];
-            $journalsHistory[] = $cumulativeJournals;
-            $arksHistory[] = $cumulativeArks;
+        // Limit to last 24 months
+        if (count($months) > 24) {
+            $months = array_slice($months, -24);
+            $arksHistory = array_slice($arksHistory, -24);
+            $journalsHistory = array_slice($journalsHistory, -24);
         }
         
-        return [
+        $cacheData = [
             'generated_at' => time(),
             'total_arks' => $totalGlobal,
             'total_journals' => $totalRevistas,
@@ -155,6 +239,12 @@ function generateCache($pdo) {
             'journals_history' => $journalsHistory,
             'arks_history' => $arksHistory
         ];
+        
+        // Save cache
+        file_put_contents($cacheFile, json_encode($cacheData, JSON_PRETTY_PRINT));
+        
+        return $cacheData;
+        
     } catch (Exception $e) {
         return ['error' => $e->getMessage()];
     }
@@ -175,12 +265,21 @@ if (file_exists($cacheFile)) {
     }
 }
 
-// If cache is invalid, generate new data
+// If cache is invalid or expired, generate new data preserving history
 if (!$cacheValid) {
-    $stats = generateCache($ark_pdo);
-    if (!isset($stats['error'])) {
-        file_put_contents($cacheFile, json_encode($stats));
-    }
+    $stats = generateCache($ark_pdo, $cacheFile);
+}
+
+// If still no stats, create default array
+if (!isset($stats) || empty($stats)) {
+    $stats = [
+        'generated_at' => time(),
+        'total_arks' => 0,
+        'total_journals' => 0,
+        'months' => [date('Y-m')],
+        'journals_history' => [0],
+        'arks_history' => [0]
+    ];
 }
 
 // Prepare chart data
@@ -397,7 +496,7 @@ header('Content-Type: text/html; charset=utf-8');
             const months = <?php echo $monthsJson; ?>;
             const journalsData = <?php echo $journalsHistoryJson; ?>;
             const arksData = <?php echo $arksHistoryJson; ?>;
-            
+                
             // Journal Growth Chart
             const ctx1 = document.getElementById('journalsChart').getContext('2d');
             new Chart(ctx1, {
