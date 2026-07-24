@@ -1,13 +1,13 @@
 <?php
 /**
- * Statistics Collection Endpoint - v3.1.0.0
+ * Statistics Collection Endpoint
  * URL: POST https://revistacarnaubais.com.br/ark-telemetry/collect
  * 
  * Receives aggregated statistics from plugins via scheduled task push.
  * Security: Requires valid token + plugin identity verification.
  * 
  * @package ARKTelemetry
- * @version 3.1.0.0
+ * @version 3.1.1.0
  */
 
 require_once __DIR__ . '/bootstrap.php';
@@ -145,7 +145,7 @@ curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_TIMEOUT, 5);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry/3.1.0.0');
+curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry/3.1.1.0');
 curl_setopt($ch, CURLOPT_NOBODY, true);
 
 $httpCode = 0;

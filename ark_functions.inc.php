@@ -2,7 +2,7 @@
 /**
  * Helper functions for ARK Telemetry system
  * @package ARKTelemetry
- * @version 3.1.0.0
+ * @version 3.1.1.0
  */
 
 /**

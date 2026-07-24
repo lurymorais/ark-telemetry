@@ -1,6 +1,6 @@
 <?php
 /**
- * Bootstrap for ARK Telemetry System - v3.1.0.0
+ * Bootstrap for ARK Telemetry System - v3.1.1.0
  * URL: https://revistacarnaubais.com.br/ark-telemetry/bootstrap.php
  */
 
@@ -131,7 +131,7 @@ function verifyPluginIdentity($domain) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry/3.1.0.0');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry/3.1.1.0');
     curl_setopt($ch, CURLOPT_NOBODY, true); // Only check if file exists
     
     $httpCode = 0;

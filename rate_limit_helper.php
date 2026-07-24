@@ -4,7 +4,7 @@
  * Only increases wait time with each failure, never permanently blocks
  * 
  * @package ARKTelemetry
- * @version 3.1.0.0
+ * @version 3.1.1.0
  */
 
 class RateLimitHelper {

@@ -1,12 +1,12 @@
 <?php
 /**
- * NAAN Validation Endpoint - v3.1.0.0
+ * NAAN Validation Endpoint
  * URL: POST https://revistacarnaubais.com.br/ark-telemetry/validate
  * 
  * Validates NAAN using local cache first, then n2t.net API as fallback.
  * 
  * @package ARKTelemetry
- * @version 3.1.0.0
+ * @version 3.1.1.0
  */
 
 require_once __DIR__ . '/bootstrap.php';
@@ -99,7 +99,7 @@ if (file_exists($cacheFile)) {
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry-Cache/3.1.0.0');
+        curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry-Cache/3.1.1.0');
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         
         $response = curl_exec($ch);
@@ -159,7 +159,7 @@ if (file_exists($cacheFile)) {
                     'expires_at' => time() + 86400,
                     'data' => $naanMap,
                     'count' => count($naanMap),
-                    'version' => '3.1.0.0'
+                    'version' => '3.1.1.0'
                 ];
                 
                 file_put_contents($cacheFile, json_encode($cacheData, JSON_PRETTY_PRINT));
@@ -188,7 +188,7 @@ if (!$registeredDomain) {
     curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Plugin-Validator/3.1.0.0');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Plugin-Validator/3.1.1.0');
     
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);

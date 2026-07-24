@@ -1,11 +1,11 @@
 #!/usr/bin/php
 <?php
 /**
- * NAAN Cache Updater & Cleanup - v3.1.0.0
+ * NAAN Cache Updater & Cleanup
  * Run daily via cron to fetch NAAN list and clean old records
  * 
  * @package ARKTelemetry
- * @version 3.1.0.0
+ * @version 3.1.1.0
  */
 
 // detect cli or web execution
@@ -52,7 +52,7 @@ function fetchNaanList() {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry-Cache/3.1.0.0');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'ARK-Telemetry-Cache/3.1.1.0');
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
     $response = curl_exec($ch);
@@ -131,7 +131,7 @@ function saveCache($data) {
         'expires_at' => time() + CACHE_EXPIRY,
         'data' => $data,
         'count' => count($data),
-        'version' => '3.1.0.0'
+        'version' => '3.1.1.0'
     ];
     
     $json = json_encode($cache, JSON_PRETTY_PRINT);

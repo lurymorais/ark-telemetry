@@ -4,7 +4,7 @@
  * URL: https://revistacarnaubais.com.br/ark-telemetry/api.php
  * 
  * @package ARKTelemetry
- * @version 3.1.0.0
+ * @version 3.1.1.0
  */
 
 require_once __DIR__ . '/bootstrap.php';
