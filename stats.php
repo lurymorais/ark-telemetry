@@ -168,33 +168,38 @@ function generateCache($pdo, $cacheFile) {
                     'journals' => (int)$row['journals_count']
                 ];
             }
-            
-            // Merge months from cache and database
-            $allMonths = array_unique(array_merge($months, array_keys($dbDataMap)));
+            $cacheArksMap = [];
+            $cacheJournalsMap = [];
+            if ($existingCache && !empty($existingCache['months'])) {
+                foreach ($existingCache['months'] as $i => $m) {
+                    $cacheArksMap[$m]     = (int)($existingCache['arks_history'][$i]     ?? 0);
+                    $cacheJournalsMap[$m] = (int)($existingCache['journals_history'][$i] ?? 0);
+                }
+            }
+            $allMonths = array_unique(array_merge(array_keys($cacheArksMap), array_keys($dbDataMap)));
             sort($allMonths);
-            
-            // Rebuild complete history
             $newMonths = [];
             $newArksHistory = [];
             $newJournalsHistory = [];
-            
             $cumulativeArks = 0;
             $cumulativeJournals = 0;
             
             foreach ($allMonths as $month) {
                 $newMonths[] = $month;
-                
-                if (isset($dbDataMap[$month])) {
-                    $cumulativeArks += $dbDataMap[$month]['arks'];
+                if (isset($cacheArksMap[$month])) {
+                    $cumulativeArks     = $cacheArksMap[$month];
+                    $cumulativeJournals = $cacheJournalsMap[$month];
+                } elseif (isset($dbDataMap[$month])) {
+                    $cumulativeArks     += $dbDataMap[$month]['arks'];
                     $cumulativeJournals += $dbDataMap[$month]['journals'];
                 }
-                
-                $newArksHistory[] = $cumulativeArks;
+
+                $newArksHistory[]     = $cumulativeArks;
                 $newJournalsHistory[] = $cumulativeJournals;
             }
-            
-            $months = $newMonths;
-            $arksHistory = $newArksHistory;
+
+            $months          = $newMonths;
+            $arksHistory     = $newArksHistory;
             $journalsHistory = $newJournalsHistory;
         }
         
