@@ -234,24 +234,16 @@ $log = function($message, $level = 'info') {
     error_log("[NAAN-Cache] [{$level}] " . $message);
 };
 
-$log("Starting NAAN cache update", 'info');
-
 try {
     // 1. Fetch fresh NAAN list
-    $log("Fetching NAAN list from n2t.net...", 'info');
     $naanList = fetchNaanList();
     $count = count($naanList);
-    $log("Fetched {$count} NAANs", 'info');
     
     // 2. Save to cache (always update)
-    $log("Saving to cache file...", 'info');
     $cache = saveCache($naanList);
-    $log("Cache saved with {$cache['count']} NAANs", 'info');
     
     // 3. Cleanup old records
-    $log("Cleaning old records...", 'info');
     $deleted = cleanupOldRecords($ark_pdo);
-    $log("Cleaned: {$deleted['validations']} validations, {$deleted['rate_limits']} rate limits, {$deleted['tokens']} tokens, {$deleted['consent_logs']} consent logs", 'info');
     
     // 4. Output summary
     echo json_encode([
@@ -263,8 +255,6 @@ try {
         'cache_size' => filesize(CACHE_FILE),
         'timestamp' => date('c')
     ], JSON_PRETTY_PRINT);
-    
-    $log("Cache update completed successfully", 'info');
     
 } catch (Exception $e) {
     // If update fails, keep the existing cache
